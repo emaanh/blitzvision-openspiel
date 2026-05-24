@@ -1,92 +1,126 @@
+# BlitzGo
 
-<!-- disableFinding(IMAGE_ALT_TEXT_INACCESSIBLE) -->
-<!-- disableFinding(HEADING_REPEAT_H1) -->
-<!-- disableFinding(SNIPPET_INVALID_LANGUAGE) -->
-<!-- disableFinding("github") -->
-<!-- disableFinding(LINK_CL_HEAD) -->
+A custom two-player territory game, built on top of OpenSpiel, with the goal of training an AlphaZero agent to play it.
 
-# OpenSpiel: A Framework for Reinforcement Learning in Games
+BlitzGo is not Go. It has its own rules around territory, enclosures, and captures — designed from scratch.
 
-[![Documentation Status](https://readthedocs.org/projects/openspiel/badge/?version=latest)](https://openspiel.readthedocs.io/en/latest/?badge=latest)
-![build_and_test](https://github.com/deepmind/open_spiel/workflows/build_and_test/badge.svg)
-[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org)
+---
 
-OpenSpiel is a collection of environments and algorithms for research in general
-reinforcement learning and search/planning in games. OpenSpiel supports n-player
-(single- and multi- agent) zero-sum, cooperative and general-sum, one-shot and
-sequential, strictly turn-taking and simultaneous-move, perfect and imperfect
-information games, as well as traditional multiagent environments such as
-(partially- and fully- observable) grid worlds and social dilemmas. OpenSpiel
-also includes tools to analyze learning dynamics and other common evaluation
-metrics. Games are represented as procedural extensive-form games, with some
-natural extensions. The core API and games are implemented in C++ and exposed to
-Python. Algorithms and tools are written both in C++ and Python.
+## The Game
 
-To try OpenSpiel in Google Colaboratory, please refer to `open_spiel/colabs` subdirectory or start [here](https://colab.research.google.com/github/deepmind/open_spiel/blob/master/open_spiel/colabs/install_open_spiel.ipynb).
+Two players (Black and White) take turns placing stones on a grid. The goal is to control territory.
 
-<p align="center">
-  <img src="docs/_static/OpenSpielB.png" alt="OpenSpiel visual asset">
-</p>
+- **Stones** count as territory for the player who placed them.
+- **Enclosures** — surround a region with your stones and you claim everything inside. Enemy stones inside get captured and removed.
+- If you enclose a region that was already claimed by your opponent, you take it.
+- **Terminal condition** — the game ends when all claimed territory is stable (no cell has two or more diagonal enemy stones threatening it).
 
-# Index
+Territory score = your stones + your enclosed cells. Highest score wins.
 
-Please choose among the following options:
+---
 
-*   [Installing OpenSpiel](docs/install.md) (for Linux and MacOS; see separate
-    [Windows Installation](docs/windows.md) instructions.)
-*   [Introduction to OpenSpiel](docs/intro.md)
-*   [API Overview and First Example](docs/concepts.md)
-*   [API Reference](docs/api_reference.md)
-*   [Overview of Implemented Games](docs/games.md)
-*   [Overview of Implemented Algorithms](docs/algorithms.md)
-*   [Developer Guide](docs/developer_guide.md)
-*   [Using OpenSpiel as a C++ Library](docs/library.md)
-*   [Guidelines and Contributing](docs/contributing.md)
-*   [Authors](docs/authors.md)
+## Setup
 
-For a longer introduction to the core concepts, formalisms, and terminology,
-including an overview of the algorithms and some results, please see
-[OpenSpiel: A Framework for Reinforcement Learning in Games](https://arxiv.org/abs/1908.09453).
+First time:
 
-For an overview of OpenSpiel and example uses of the core API, please check out
-our tutorials:
+```bash
+./install.sh
+```
 
-*   [Motivation, Core API, Brief Intro to Replictor Dynamics and Imperfect
-    Information Games](https://www.youtube.com/watch?v=8NCPqtPwlFQ) by Marc
-    Lanctot.
-    [(slides)](http://mlanctot.info/files/OpenSpiel_Tutorial_KU_Leuven_2022.pdf)
-    [(colab)](https://colab.research.google.com/github/deepmind/open_spiel/blob/master/open_spiel/colabs/OpenSpielTutorial.ipynb)
-*   [Motivation, Core API, Implementing CFR and REINFORCE on Kuhn poker, Leduc
-    poker, and Goofspiel](https://www.youtube.com/watch?v=o6JNHoGUXCo) by Edward
-    Lockhart.
-    [(slides)](http://mlanctot.info/files/open_spiel_tutorial-mar2021-comarl.pdf)
-    [(colab)](https://colab.research.google.com/github/deepmind/open_spiel/blob/master/open_spiel/colabs/CFR_and_REINFORCE.ipynb)
+Build:
 
-If you use OpenSpiel in your research, please cite the paper using the following
-BibTeX:
+```bash
+./open_spiel/scripts/build_and_run_tests.sh --build_only=true
+```
 
-```bibtex
-@article{LanctotEtAl2019OpenSpiel,
-  title     = {{OpenSpiel}: A Framework for Reinforcement Learning in Games},
-  author    = {Marc Lanctot and Edward Lockhart and Jean-Baptiste Lespiau and
-               Vinicius Zambaldi and Satyaki Upadhyay and Julien P\'{e}rolat and
-               Sriram Srinivasan and Finbarr Timbers and Karl Tuyls and
-               Shayegan Omidshafiei and Daniel Hennes and Dustin Morrill and
-               Paul Muller and Timo Ewalds and Ryan Faulkner and J\'{a}nos Kram\'{a}r
-               and Bart De Vylder and Brennan Saeta and James Bradbury and David Ding
-               and Sebastian Borgeaud and Matthew Lai and Julian Schrittwieser and
-               Thomas Anthony and Edward Hughes and Ivo Danihelka and Jonah Ryan-Davis},
-  year      = {2019},
-  eprint    = {1908.09453},
-  archivePrefix = {arXiv},
-  primaryClass = {cs.LG},
-  journal   = {CoRR},
-  volume    = {abs/1908.09453},
-  url       = {http://arxiv.org/abs/1908.09453},
+Set your Python path so the bindings are found:
+
+```bash
+export PYTHONPATH=$PYTHONPATH:/path/to/blitzvision-openspiel
+export PYTHONPATH=$PYTHONPATH:/path/to/blitzvision-openspiel/build/python
+```
+
+---
+
+## Playing
+
+```bash
+python3 open_spiel/games/blitzgo/play.py
+```
+
+Enter moves as `row col` (1-indexed, matching what's printed on the board). Example: `4 3`.
+
+### Record a game
+
+```bash
+# give it a name
+python3 open_spiel/games/blitzgo/play.py --record mygame
+
+# or let it generate one from the timestamp
+python3 open_spiel/games/blitzgo/play.py --record
+```
+
+Saves to `open_spiel/games/blitzgo/recordings/<name>.json`.
+
+### Replay a game
+
+```bash
+python3 open_spiel/games/blitzgo/play.py --replay recordings/mygame.json
+
+# speed it up or slow it down
+python3 open_spiel/games/blitzgo/play.py --replay recordings/mygame.json --sleep 0.3
+```
+
+Default sleep between moves is 1 second.
+
+---
+
+## Recording format
+
+```json
+{
+  "version": 1,
+  "board_dim": 5,
+  "recorded_at": "2026-05-24T13:00:00",
+  "name": "mygame",
+  "moves": [12, 7, 24]
 }
 ```
 
-## Versioning
+Moves are flat cell indices. To convert back to `(row, col)`:
+- `row = BOARD_DIM - action // BOARD_DIM`
+- `col = action % BOARD_DIM + 1`
 
-We use [Semantic Versioning](https://semver.org/).
+---
 
+## Board size
+
+Set `BOARD_DIM` at the top of `open_spiel/games/blitzgo/blitzgo.h`. Rebuild after changing it.
+
+---
+
+## Project structure
+
+```
+open_spiel/games/blitzgo/
+  blitzgo.h       — game constants, class declarations
+  blitzgo.cc      — full game logic (placement, enclosures, territory, DFS)
+  play.py         — interactive play, recording, replay
+  recordings/     — saved games (created on first record)
+
+python_blitzgo/
+  cleaner_board.py — original Python prototype (reference)
+```
+
+---
+
+## Goal
+
+Train an AlphaZero agent (MCTS + ResNet) to play BlitzGo. The C++ OpenSpiel implementation is the environment. The observation tensor shape is `[5, BOARD_DIM, BOARD_DIM]` — 5 feature planes for the network input.
+
+---
+
+## Built with
+
+- [OpenSpiel](https://github.com/google-deepmind/open_spiel) — game framework
+- C++20, Python 3.11+, Clang

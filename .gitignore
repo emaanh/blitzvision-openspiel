@@ -69,3 +69,7 @@ open_spiel/.vs
 
 # Editor swap files
 *.swp
+CLAUDE.md
+
+.cache/
+notes/

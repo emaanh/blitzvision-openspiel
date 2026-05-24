@@ -16,6 +16,8 @@ set(GAME_SOURCES
   battleship/battleship_types.cc
   blackjack/blackjack.cc
   blackjack/blackjack.h
+  blitzgo/blitzgo.cc
+  blitzgo/blitzgo.h
   blotto/blotto.cc
   blotto/blotto.h
   breakthrough/breakthrough.cc
@@ -362,6 +364,10 @@ add_test(battleship_test battleship_test)
 add_executable(blackjack_test blackjack/blackjack_test.cc ${OPEN_SPIEL_OBJECTS}
                $<TARGET_OBJECTS:tests>)
 add_test(blackjack_test blackjack_test)
+
+add_executable(blitzgo_test blitzgo/blitzgo_test.cc ${OPEN_SPIEL_OBJECTS}
+               $<TARGET_OBJECTS:tests>)
+add_test(blitzgo_test blitzgo_test)
 
 add_executable(blotto_test blotto/blotto_test.cc ${OPEN_SPIEL_OBJECTS}
                $<TARGET_OBJECTS:tests>)
