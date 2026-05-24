@@ -16,6 +16,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "open_spiel/abseil-cpp/absl/strings/str_cat.h"
@@ -40,8 +41,34 @@ inline Player StoneToPlayer(uint8_t stone) {
   return static_cast<Player>(stone - 1);
 }
 
-struct Side { int delta; uint8_t wall; bool on_edge; };
+struct StackSquared {
+  std::array<int, BOARD_CELLS> data;
+  int top = 0;
+  void push(int c)  { data[top++] = c; }
+  int  pop()        { return data[--top]; }
+  bool empty() const { return top == 0; }
+};
+
+struct Side { int delta; uint8_t wall; };
 struct Direction { int seed; bool valid; uint8_t marker; };
+
+inline std::pair<int,int> CellRowCol(int cell) {
+  return { cell / BOARD_DIM, cell % BOARD_DIM };
+}
+
+inline uint8_t EdgeWalls(int row, int col) {
+  return (row == 0           ? kWallNorth : 0)
+       | (row == BOARD_DIM-1 ? kWallSouth : 0)
+       | (col == 0           ? kWallWest  : 0)
+       | (col == BOARD_DIM-1 ? kWallEast  : 0);
+}
+
+static constexpr Side kSides[4] = {
+  { -BOARD_DIM, kWallNorth },
+  { +BOARD_DIM, kWallSouth },
+  { -1,         kWallWest  },
+  { +1,         kWallEast  },
+};
 
 namespace {
 
@@ -104,14 +131,14 @@ int BlitzGoGame::MaxGameLength() const {
 
 BlitzGoState::BlitzGoState(std::shared_ptr<const Game> game)
     : State(game), stones_{}, enclosures_{}, current_player_(0),
-      outcome_(kInvalidPlayer), territory_{} {}
+      outcome_(kInvalidPlayer), territory_{}, suicide_cell_(-1) {}
 
 Player BlitzGoState::CurrentPlayer() const {
   return IsTerminal() ? kTerminalPlayerId : current_player_;
 }
 
 std::vector<Action> BlitzGoState::LegalActions() const {
-  //   Superko filtering goes here too.
+  // Superko filtering goes here too.
   if(IsTerminal()) return {};
   std::vector<Action> legal_actions;
   legal_actions.reserve(BOARD_CELLS);
@@ -156,35 +183,28 @@ bool BlitzGoState::HasEnclosurePotential(int cell) const {
 
 bool BlitzGoState::IsRegionEnclosed(int start, uint8_t direction,
                                      uint8_t (&visited)[BOARD_CELLS]) {
-  std::array<int, BOARD_CELLS> stack;
-  int top = 0;
+  StackSquared stack;
   uint8_t walls_touched = 0;
   const uint8_t my_stone = PlayerToStone(current_player_);
   const uint8_t enemy_stone = PlayerToStone(Enemy(current_player_));
 
   visited[start] = direction;
-  stack[top++] = start;
+  stack.push(start);
 
   auto visit = [&](int n) -> bool {
     if (stones_[n] == my_stone) return true;  // own stone acts as wall
     if (visited[n] != 0 && visited[n] != direction) return false;
-    if (visited[n] == 0) { visited[n] = direction; stack[top++] = n; }
+    if (visited[n] == 0) { visited[n] = direction; stack.push(n); }
     return true;
   };
 
-  while (top > 0) {
-    int c = stack[--top];
-    int row = c / BOARD_DIM;
-    int col = c % BOARD_DIM;
+  while (!stack.empty()) {
+    int c = stack.pop();
+    auto [row, col] = CellRowCol(c);
 
-    const Side sides[4] = {
-      { -BOARD_DIM, kWallNorth, row == 0           },
-      { +BOARD_DIM, kWallSouth, row == BOARD_DIM-1 },
-      { -1,         kWallWest,  col == 0            },
-      { +1,         kWallEast,  col == BOARD_DIM-1  },
-    };
-    for (const Side& s : sides) {
-      if (s.on_edge) walls_touched |= s.wall;
+    const uint8_t edge_walls = EdgeWalls(row, col);
+    for (const Side& s : kSides) {
+      if (s.wall & edge_walls) walls_touched |= s.wall;
       else if (!visit(c + s.delta)) return false;
     }
 
@@ -205,8 +225,7 @@ bool BlitzGoState::TryEnclose(int cell) {
 
   uint8_t visited[BOARD_CELLS] = {};
   bool captured = false;
-  int row = cell / BOARD_DIM;
-  int col = cell % BOARD_DIM;
+  auto [row, col] = CellRowCol(cell);
 
   const Direction dirs[4] = {
     { cell - BOARD_DIM, row > 0,           1 },
@@ -217,8 +236,9 @@ bool BlitzGoState::TryEnclose(int cell) {
 
   for (const Direction& dir : dirs) {
     if (!dir.valid) continue;
-    if (stones_[dir.seed] == my_stone) continue;  // no region to enclose on own side
-    if (!IsRegionEnclosed(dir.seed, dir.marker, visited)) continue;
+    if (stones_[dir.seed] == my_stone) continue;  
+    if (!IsRegionEnclosed(dir.seed, dir.marker, visited)) 
+      continue;
 
     for (int c = 0; c < BOARD_CELLS; c++) {
       if (visited[c] != dir.marker) continue;
@@ -234,16 +254,50 @@ bool BlitzGoState::TryEnclose(int cell) {
   return captured;
 }
 
-void BlitzGoState::DoApplyAction(Action action) {
-  PlaceStone(action, current_player_);
-  if (HasEnclosurePotential(action)) {
-    bool captured = TryEnclose(action);
-    bool penetrated = captured && enclosures_[action] == Enemy(current_player_);
-    if (penetrated) {
-      // emptyEnemyEnclosure(action); //update enclosures for the enemy with DFS
-      std::cout << "penetrated" << std::endl;
+void BlitzGoState::EmptyEnemyEnclosure(int cell) {
+  const uint8_t enemy_stone = PlayerToStone(Enemy(current_player_));
+
+  StackSquared stack;
+  ReleaseEnclosure(cell);
+  stack.push(cell);
+
+  while (!stack.empty()) {
+    int c = stack.pop();
+    auto [row, col] = CellRowCol(c);
+
+    const uint8_t edge_walls = EdgeWalls(row, col);
+    for (const Side& s : kSides) {
+      if (s.wall & edge_walls) continue;
+      int n = c + s.delta;
+      if (enclosures_[n] == enemy_stone) {
+        ReleaseEnclosure(n);
+        stack.push(n);
+      }
     }
   }
+}
+
+void BlitzGoState::DoApplyAction(Action action) {
+  if (suicide_cell_ != -1) {
+    ClaimEnclosure(suicide_cell_, Enemy(current_player_));
+    RemoveStone(suicide_cell_);
+    suicide_cell_ = -1;
+  }
+
+  const uint8_t enemy_stone = PlayerToStone(Enemy(current_player_));
+  bool in_enemy_enclosure = enclosures_[action] == enemy_stone;
+
+  PlaceStone(action, current_player_);
+
+  if (in_enemy_enclosure) ReleaseEnclosure(action);
+
+  bool captured = false;
+  if (HasEnclosurePotential(action)) {
+    captured = TryEnclose(action);
+    if (captured && in_enemy_enclosure) EmptyEnemyEnclosure(action);
+  }
+  if (!captured && in_enemy_enclosure) suicide_cell_ = action;
+
   SwitchPlayer();
 }
 
@@ -273,12 +327,14 @@ std::string BlitzGoState::GridToString(
 
   absl::StrAppend(&result, "   ");
   for (int col = 1; col <= BOARD_DIM; ++col)
-    absl::StrAppend(&result, col < 10 ? " " : "", std::to_string(col));
+    absl::StrAppend(&result, col < 10 ? " " : "", 
+  std::to_string(col));
   absl::StrAppend(&result, "\n");
 
   for (int row = 0; row < BOARD_DIM; ++row) {
     int label = BOARD_DIM - row;
-    absl::StrAppend(&result, label < 10 ? " " : "", std::to_string(label), "  ");
+    absl::StrAppend(&result, label < 10 ? " " : "", 
+      std::to_string(label), "  ");
     for (int col = 0; col < BOARD_DIM; ++col) {
       uint8_t cell = grid[row * BOARD_DIM + col];
       if (cell == 0)      absl::StrAppend(&result, "\xC2\xB7 ");
@@ -290,7 +346,8 @@ std::string BlitzGoState::GridToString(
 
   absl::StrAppend(&result, "   ");
   for (int col = 1; col <= BOARD_DIM; ++col)
-    absl::StrAppend(&result, col < 10 ? " " : "", std::to_string(col));
+    absl::StrAppend(&result, col < 10 ? " " : "", 
+  std::to_string(col));
   absl::StrAppend(&result, "\n");
 
   return result;

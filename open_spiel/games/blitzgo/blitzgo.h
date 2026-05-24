@@ -70,6 +70,7 @@ class BlitzGoState : public State {
   bool HasEnclosurePotential(int cell) const;
   bool TryEnclose(int cell);
   bool IsRegionEnclosed(int start, uint8_t direction, uint8_t (&visited)[BOARD_CELLS]);
+  void EmptyEnemyEnclosure(int cell);
 
   std::array<uint8_t, BOARD_CELLS> stones_;
   std::array<uint8_t, BOARD_CELLS> enclosures_;
@@ -77,6 +78,7 @@ class BlitzGoState : public State {
   Player current_player_;
   Player outcome_;
   int territory_[2];
+  int suicide_cell_;
 };
 
 class BlitzGoGame : public Game {

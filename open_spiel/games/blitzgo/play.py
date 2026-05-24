@@ -6,7 +6,8 @@ from datetime import datetime
 
 import pyspiel
 
-BOARD_DIM = 5
+GAME = pyspiel.load_game("blitzgo")
+BOARD_DIM = GAME.observation_tensor_shape()[1]
 RECORDINGS_DIR = os.path.join(os.path.dirname(__file__), "recordings")
 
 
@@ -47,44 +48,54 @@ def load_recording(path):
 
 def play_human(record_name):
     recording = new_recording(record_name) if record_name else None
+    state = GAME.new_initial_state()
 
-    game = pyspiel.load_game("blitzgo")
-    state = game.new_initial_state()
+    try:
+        while not state.is_terminal():
+            os.system("clear")
+            print(state)
+            legal = set(state.legal_actions())
+            try:
+                raw = input("Enter move (row col): ").strip().split()
+                row, col = int(raw[0]), int(raw[1])
+                action = rc_to_action(row, col)
+                if action not in legal:
+                    print("Illegal move, try again.")
+                    continue
+                state.apply_action(action)
+                if recording is not None:
+                    recording["moves"].append(action)
+            except (ValueError, IndexError):
+                print("Invalid input, enter two numbers e.g. '4 3'")
 
-    while not state.is_terminal():
         os.system("clear")
         print(state)
-        legal = set(state.legal_actions())
-        try:
-            raw = input("Enter move (row col): ").strip().split()
-            row, col = int(raw[0]), int(raw[1])
-            action = rc_to_action(row, col)
-            if action not in legal:
-                print("Illegal move, try again.")
-                continue
-            state.apply_action(action)
-            if recording is not None:
-                recording["moves"].append(action)
-        except (ValueError, IndexError):
-            print("Invalid input, enter two numbers e.g. '4 3'")
+        print("Game over. Returns:", state.returns())
+    except KeyboardInterrupt:
+        print()
 
-    os.system("clear")
-    print(state)
-    print("Game over. Returns:", state.returns())
-
-    if recording is not None:
+    if recording is not None and recording["moves"]:
         save_recording(recording, record_name)
 
 
+def resolve_replay_path(path):
+    if os.path.exists(path):
+        return path
+    name = path if path.endswith(".json") else f"{path}.json"
+    candidate = os.path.join(RECORDINGS_DIR, name)
+    if os.path.exists(candidate):
+        return candidate
+    raise FileNotFoundError(f"Recording not found: {path}")
+
+
 def play_replay(path, sleep_secs):
-    recording = load_recording(path)
+    recording = load_recording(resolve_replay_path(path))
     stored_dim = recording.get("board_dim")
     if stored_dim != BOARD_DIM:
         print(f"Warning: recording was played on a {stored_dim}x{stored_dim} board "
               f"but BOARD_DIM is {BOARD_DIM}.")
 
-    game = pyspiel.load_game("blitzgo")
-    state = game.new_initial_state()
+    state = GAME.new_initial_state()
 
     for action in recording["moves"]:
         os.system("clear")
