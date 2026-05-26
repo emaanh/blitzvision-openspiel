@@ -32,6 +32,7 @@ constexpr uint8_t kWallNorth = 1 << 0;
 constexpr uint8_t kWallSouth = 1 << 1;
 constexpr uint8_t kWallWest  = 1 << 2;
 constexpr uint8_t kWallEast  = 1 << 3;
+constexpr int kMaxEnclosureWalls = 2;
 
 inline int CountBits(uint8_t x) { return __builtin_popcount(x); }
 inline Player Enemy(Player p) { return 1 - p; }
@@ -62,6 +63,10 @@ inline uint8_t EdgeWalls(int row, int col) {
        | (col == 0           ? kWallWest  : 0)
        | (col == BOARD_DIM-1 ? kWallEast  : 0);
 }
+
+static constexpr std::pair<int,int> kDiags[4] = {
+  {-1,-1}, {-1,+1}, {+1,-1}, {+1,+1}
+};
 
 static constexpr Side kSides[4] = {
   { -BOARD_DIM, kWallNorth },
@@ -139,6 +144,7 @@ Player BlitzGoState::CurrentPlayer() const {
 
 std::vector<Action> BlitzGoState::LegalActions() const {
   // Superko filtering goes here too.
+  // legal actions should be pre computed stored in memory. 
   if(IsTerminal()) return {};
   std::vector<Action> legal_actions;
   legal_actions.reserve(BOARD_CELLS);
@@ -173,6 +179,13 @@ void BlitzGoState::ReleaseEnclosure(int cell) {
   enclosures_[cell] = 0;
 }
 
+void BlitzGoState::ResolveSuicide() {
+  if (suicide_cell_ == -1) return;
+  ClaimEnclosure(suicide_cell_, current_player_);
+  RemoveStone(suicide_cell_);
+  suicide_cell_ = -1;
+}
+
 void BlitzGoState::SwitchPlayer() {
   current_player_ = Enemy(current_player_);
 }
@@ -181,20 +194,19 @@ bool BlitzGoState::HasEnclosurePotential(int cell) const {
   return true;
 }
 
-bool BlitzGoState::IsRegionEnclosed(int start, uint8_t direction,
-                                     uint8_t (&visited)[BOARD_CELLS]) {
+bool BlitzGoState::IsRegionEnclosed(int start, uint8_t marker,
+                                     uint8_t (&visited)[BOARD_CELLS]) const {
   StackSquared stack;
   uint8_t walls_touched = 0;
   const uint8_t my_stone = PlayerToStone(current_player_);
-  const uint8_t enemy_stone = PlayerToStone(Enemy(current_player_));
 
-  visited[start] = direction;
+  visited[start] = marker;
   stack.push(start);
 
   auto visit = [&](int n) -> bool {
     if (stones_[n] == my_stone) return true;  // own stone acts as wall
-    if (visited[n] != 0 && visited[n] != direction) return false;
-    if (visited[n] == 0) { visited[n] = direction; stack.push(n); }
+    if (visited[n] != 0 && visited[n] != marker) return false;
+    if (visited[n] == 0) { visited[n] = marker; stack.push(n); }
     return true;
   };
 
@@ -208,7 +220,7 @@ bool BlitzGoState::IsRegionEnclosed(int start, uint8_t direction,
       else if (!visit(c + s.delta)) return false;
     }
 
-    if (CountBits(walls_touched) >= 3) return false;
+    if (CountBits(walls_touched) > kMaxEnclosureWalls) return false;
   }
 
   return true;
@@ -218,27 +230,22 @@ bool BlitzGoState::TryEnclose(int cell) {
   const uint8_t my_stone = PlayerToStone(current_player_);
   const uint8_t enemy_stone = PlayerToStone(Enemy(current_player_));
 
-  if (enclosures_[cell] == my_stone) {
-    ReleaseEnclosure(cell);
-    return false;
-  }
-
+  // shared across seeds; each seed uses its own marker so regions don't bleed into each other
   uint8_t visited[BOARD_CELLS] = {};
   bool captured = false;
   auto [row, col] = CellRowCol(cell);
 
   const Direction dirs[4] = {
-    { cell - BOARD_DIM, row > 0,           1 },
-    { cell + 1,         col < BOARD_DIM-1, 2 },
-    { cell + BOARD_DIM, row < BOARD_DIM-1, 3 },
-    { cell - 1,         col > 0,           4 },
+    { cell - BOARD_DIM, row > 0,           kWallNorth },
+    { cell + 1,         col < BOARD_DIM-1, kWallEast  },
+    { cell + BOARD_DIM, row < BOARD_DIM-1, kWallSouth },
+    { cell - 1,         col > 0,           kWallWest  },
   };
 
   for (const Direction& dir : dirs) {
     if (!dir.valid) continue;
     if (stones_[dir.seed] == my_stone) continue;  
-    if (!IsRegionEnclosed(dir.seed, dir.marker, visited)) 
-      continue;
+    if (!IsRegionEnclosed(dir.seed, dir.marker, visited)) continue;
 
     for (int c = 0; c < BOARD_CELLS; c++) {
       if (visited[c] != dir.marker) continue;
@@ -254,11 +261,9 @@ bool BlitzGoState::TryEnclose(int cell) {
   return captured;
 }
 
-void BlitzGoState::EmptyEnemyEnclosure(int cell) {
+void BlitzGoState::ReleaseEnemyEnclosures(int cell) {
   const uint8_t enemy_stone = PlayerToStone(Enemy(current_player_));
-
   StackSquared stack;
-  ReleaseEnclosure(cell);
   stack.push(cell);
 
   while (!stack.empty()) {
@@ -277,28 +282,65 @@ void BlitzGoState::EmptyEnemyEnclosure(int cell) {
   }
 }
 
-void BlitzGoState::DoApplyAction(Action action) {
-  if (suicide_cell_ != -1) {
-    ClaimEnclosure(suicide_cell_, Enemy(current_player_));
-    RemoveStone(suicide_cell_);
-    suicide_cell_ = -1;
+bool BlitzGoState::IsCellStable(int cell) const {
+  auto [row, col] = CellRowCol(cell);
+  const uint8_t enemy_stone = PlayerToStone(Enemy(StoneToPlayer(enclosures_[cell])));
+  int count = 0;
+  for (auto [dr, dc] : kDiags) {
+    int nr = row + dr, nc = col + dc;
+    if (nr >= 0 && nr < BOARD_DIM && nc >= 0 && nc < BOARD_DIM)
+      count += (stones_[nr * BOARD_DIM + nc] == enemy_stone);
   }
+  if (count >= 2) return false;
+  if (count == 1 && EdgeWalls(row, col) != 0) return false;
+  return true;
+}
+
+Player BlitzGoState::ComputeOutcome() const {
+  if (territory_[kBlack] + territory_[kWhite] < BOARD_CELLS) 
+    return kInvalidPlayer;
+  for (int c = 0; c < BOARD_CELLS; c++)
+    if (enclosures_[c] != 0 && !IsCellStable(c)) 
+      return kInvalidPlayer;
+  if (territory_[kBlack] > territory_[kWhite]) return kBlack;
+  if (territory_[kWhite] > territory_[kBlack]) return kWhite;
+  return kTerminalPlayerId;
+}
+
+bool BlitzGoState::CheckInvariants() const {
+  int stone_count[2] = {};
+  int enclosure_count[2] = {};
+  for (int c = 0; c < BOARD_CELLS; c++) {
+    SPIEL_DCHECK_EQ(stones_[c] != 0 && enclosures_[c] != 0, false);
+    if (stones_[c] != 0)     stone_count[StoneToPlayer(stones_[c])]++;
+    if (enclosures_[c] != 0) enclosure_count[StoneToPlayer(enclosures_[c])]++;
+  }
+  for (int p = 0; p < 2; p++)
+    SPIEL_DCHECK_EQ(territory_[p], stone_count[p] + enclosure_count[p]);
+  SPIEL_DCHECK_LE(territory_[kBlack] + territory_[kWhite], BOARD_CELLS);
+  return true;
+}
+
+void BlitzGoState::DoApplyAction(Action action) {
+  ResolveSuicide();
 
   const uint8_t enemy_stone = PlayerToStone(Enemy(current_player_));
   bool in_enemy_enclosure = enclosures_[action] == enemy_stone;
 
   PlaceStone(action, current_player_);
-
-  if (in_enemy_enclosure) ReleaseEnclosure(action);
+  if (enclosures_[action] != 0) ReleaseEnclosure(action);
 
   bool captured = false;
-  if (HasEnclosurePotential(action)) {
-    captured = TryEnclose(action);
-    if (captured && in_enemy_enclosure) EmptyEnemyEnclosure(action);
-  }
-  if (!captured && in_enemy_enclosure) suicide_cell_ = action;
+  if (HasEnclosurePotential(action)) captured = TryEnclose(action);
+
+  bool penetrated = captured && in_enemy_enclosure;
+  bool suicide    = !captured && in_enemy_enclosure;
+  if (penetrated) ReleaseEnemyEnclosures(action);
+  if (suicide)    suicide_cell_ = action;
 
   SwitchPlayer();
+  outcome_ = ComputeOutcome();
+  SPIEL_DCHECK_TRUE(CheckInvariants());
 }
 
 bool BlitzGoState::IsTerminal() const {
@@ -306,16 +348,32 @@ bool BlitzGoState::IsTerminal() const {
 }
 
 std::vector<double> BlitzGoState::Returns() const {
-  // TODO: return {black_result, white_result} using +1.0 / -1.0 / 0.0.
+  if (outcome_ == kBlack) return {1.0, -1.0};
+  if (outcome_ == kWhite) return {-1.0, 1.0};
   return {0.0, 0.0};
 }
 
 void BlitzGoState::ObservationTensor(Player player,
                                      absl::Span<float> values) const {
-  // TODO: fill `values` with kNumObservationPlanes feature planes.
-  //   values has size ObservationTensorSize() = planes * rows * cols.
-  //   AlphaZero's ResNet reads this as [planes, board_size, board_size].
-  std::fill(values.begin(), values.end(), 0.f);
+  SPIEL_DCHECK_EQ(values.size(), kNumObservationPlanes * BOARD_CELLS);
+
+  const uint8_t my_stone  = PlayerToStone(player);
+  const uint8_t opp_stone = PlayerToStone(Enemy(player));
+  const float   to_play   = (player == kBlack) ? 1.0f : 0.0f;
+
+  float* my_stones  = values.data() + 0 * BOARD_CELLS;
+  float* opp_stones = values.data() + 1 * BOARD_CELLS;
+  float* my_enc     = values.data() + 2 * BOARD_CELLS;
+  float* opp_enc    = values.data() + 3 * BOARD_CELLS;
+  float* color      = values.data() + 4 * BOARD_CELLS;
+
+  for (int c = 0; c < BOARD_CELLS; c++) {
+    my_stones[c]  = (stones_[c]     == my_stone)  ? 1.0f : 0.0f;
+    opp_stones[c] = (stones_[c]     == opp_stone) ? 1.0f : 0.0f;
+    my_enc[c]     = (enclosures_[c] == my_stone)  ? 1.0f : 0.0f;
+    opp_enc[c]    = (enclosures_[c] == opp_stone) ? 1.0f : 0.0f;
+    color[c]      = to_play;
+  }
 }
 
 //Generated by Claude.
@@ -337,9 +395,9 @@ std::string BlitzGoState::GridToString(
       std::to_string(label), "  ");
     for (int col = 0; col < BOARD_DIM; ++col) {
       uint8_t cell = grid[row * BOARD_DIM + col];
-      if (cell == 0)      absl::StrAppend(&result, "\xC2\xB7 ");
-      else if (cell == 1) absl::StrAppend(&result, "\xE2\x97\x8B ");
-      else                absl::StrAppend(&result, "\xE2\x97\x8F ");
+      if (cell == 0)                        absl::StrAppend(&result, "\xC2\xB7 ");
+      else if (cell == PlayerToStone(kBlack)) absl::StrAppend(&result, "\xE2\x97\x8B ");
+      else                                    absl::StrAppend(&result, "\xE2\x97\x8F ");
     }
     absl::StrAppend(&result, std::to_string(label), "\n");
   }
@@ -358,9 +416,9 @@ std::string BlitzGoState::ToString() const {
   absl::StrAppend(&result, GridToString(stones_));
   absl::StrAppend(&result, GridToString(enclosures_));
   absl::StrAppend(&result,
-      current_player_ == 0 ? "\xE2\x97\x8B Black" : "\xE2\x97\x8F White",
-      " to play  |  \xE2\x97\x8B ", std::to_string(territory_[0]),
-      "  \xE2\x97\x8F ", std::to_string(territory_[1]), "\n");
+      current_player_ == kBlack ? "\xE2\x97\x8B Black" : "\xE2\x97\x8F White",
+      " to play  |  \xE2\x97\x8B ", std::to_string(territory_[kBlack]),
+      "  \xE2\x97\x8F ", std::to_string(territory_[kWhite]), "\n");
   return result;
 }
 

@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "board_dim": 13,
+  "recorded_at": "2024-11-24T00:00:00",
+  "name": "cycle_demo",
+  "moves": [1, 11, 13, 25, 12, 0, 12, 0, 12, 0, 12, 0]
+}

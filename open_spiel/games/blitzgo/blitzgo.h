@@ -15,7 +15,7 @@
 #ifndef OPEN_SPIEL_GAMES_BLITZGO_H_
 #define OPEN_SPIEL_GAMES_BLITZGO_H_
 
-constexpr int BOARD_DIM = 5;
+constexpr int BOARD_DIM = 13;
 constexpr int BOARD_CELLS = BOARD_DIM * BOARD_DIM;
 
 #include <array>
@@ -34,6 +34,8 @@ namespace open_spiel {
 namespace blitzgo {
 
 inline constexpr int kNumPlayers = 2;
+inline constexpr Player kBlack = 0;
+inline constexpr Player kWhite = 1;
 
 // Number of observation planes for the AlphaZero network input tensor.
 // Adjust if you add more feature planes.
@@ -67,10 +69,14 @@ class BlitzGoState : public State {
   void ClaimEnclosure(int cell, Player player);
   void ReleaseEnclosure(int cell);
   void SwitchPlayer();
+  void ResolveSuicide();
   bool HasEnclosurePotential(int cell) const;
   bool TryEnclose(int cell);
-  bool IsRegionEnclosed(int start, uint8_t direction, uint8_t (&visited)[BOARD_CELLS]);
-  void EmptyEnemyEnclosure(int cell);
+  bool IsRegionEnclosed(int start, uint8_t marker, uint8_t (&visited)[BOARD_CELLS]) const;
+  void ReleaseEnemyEnclosures(int cell);
+  bool CheckInvariants() const;
+  bool IsCellStable(int cell) const;
+  Player ComputeOutcome() const;
 
   std::array<uint8_t, BOARD_CELLS> stones_;
   std::array<uint8_t, BOARD_CELLS> enclosures_;

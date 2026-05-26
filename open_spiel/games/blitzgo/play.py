@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import sys
 import time
 from datetime import datetime
 
@@ -92,8 +93,11 @@ def play_replay(path, sleep_secs):
     recording = load_recording(resolve_replay_path(path))
     stored_dim = recording.get("board_dim")
     if stored_dim != BOARD_DIM:
-        print(f"Warning: recording was played on a {stored_dim}x{stored_dim} board "
-              f"but BOARD_DIM is {BOARD_DIM}.")
+        sys.exit(
+            f"Error: C++ is compiled for {BOARD_DIM}x{BOARD_DIM} "
+            f"but this recording is {stored_dim}x{stored_dim}. "
+            f"Recompile with BOARD_DIM={stored_dim} or use a matching recording."
+        )
 
     state = GAME.new_initial_state()
 
