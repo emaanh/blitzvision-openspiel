@@ -144,13 +144,33 @@ Player BlitzGoState::CurrentPlayer() const {
 
 std::vector<Action> BlitzGoState::LegalActions() const {
   // Superko filtering goes here too.
-  // legal actions should be pre computed stored in memory. 
+  // legal actions should be pre computed stored in memory.
   if(IsTerminal()) return {};
+  const uint8_t my_stone    = PlayerToStone(current_player_);
+  const uint8_t enemy_stone = PlayerToStone(Enemy(current_player_));
+
+  // 0=penetration, 1=adjacent own stone, 2=other, 3=illegal
+  uint8_t score[BOARD_CELLS];
+  for (int cell = 0; cell < BOARD_CELLS; cell++) {
+    if (stones_[cell] != 0) { score[cell] = 3; continue; }
+    if (enclosures_[cell] == enemy_stone) {
+      score[cell] = IsCellStable(cell) ? 3 : 0;
+      continue;
+    }
+    auto [row, col] = CellRowCol(cell);
+    const uint8_t edge_walls = EdgeWalls(row, col);
+    score[cell] = 2;
+    for (const Side& s : kSides) {
+      if (s.wall & edge_walls) continue;
+      if (stones_[cell + s.delta] == my_stone) { score[cell] = 1; break; }
+    }
+  }
+
   std::vector<Action> legal_actions;
   legal_actions.reserve(BOARD_CELLS);
-  for(int cell = 0; cell < BOARD_CELLS; cell++) {
-    if(stones_[cell] == 0) legal_actions.push_back(cell);
-  }
+  for (int s = 0; s < 3; s++)
+    for (int cell = 0; cell < BOARD_CELLS; cell++)
+      if (score[cell] == s) legal_actions.push_back(cell);
   return legal_actions;
 }
 
